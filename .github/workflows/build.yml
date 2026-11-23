@@ -1,0 +1,101 @@
+# Every push and pull request: the program for the Echos (32-bit ARM, static musl) built twice in two folders, which
+# has to give the same bytes (the release job builds it a third time and has to get them again); the release's
+# packing and its refusals, with a throwaway key, and the workflows' rules (make release-test); and the plugin run
+# inside hassmic's PC build (test.py), with hassmic checked out at the commit sdk/VERSION names.  A tag v<version>
+# releases: release.yml calls this first (workflow_call) and releases only once it passed; this workflow releases
+# nothing itself, nor vouches for anything (the plugin index takes only the provenance whose signer and run are
+# release.yml, for a tag's push: one made here would name build.yml).
+# Every action is pinned by its commit (the tag it was in a comment beside it): a tag moved in the action's own
+# repository changes nothing that runs here.  Raised by hand.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  # hassmic's repository, for the PC test (the commit is sdk/VERSION's)
+  HASSMIC_REPO: Gamer92000/echo-dot-assist
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      # zig as a Python wheel, by its SHA-256 (.github/zig.txt): one pinned download, the same compiler on every
+      # runner, the release job's too.  In an environment of its own, outside the tree (the runner's Python may refuse
+      # a plain pip install, and the second build copies the tree)
+      - name: Compiler
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zig"
+          "$RUNNER_TEMP/zig/bin/pip" install --require-hashes -r .github/zig.txt
+          echo "PLUGIN_CC=$RUNNER_TEMP/zig/bin/python -m ziglang cc -target arm-linux-musleabihf -mcpu=cortex_a7" >> "$GITHUB_ENV"
+      - name: Build, twice
+        run: |
+          make build/microwakeword
+          cp -r . ../again && make -C ../again clean build/microwakeword
+          sha256sum build/microwakeword | cut -d' ' -f1 > build/microwakeword.sha256
+          [ "$(sha256sum ../again/build/microwakeword | cut -d' ' -f1)" = "$(cat build/microwakeword.sha256)" ] ||
+              { echo "::error::the program is not the same when built again in another folder"; exit 1; }
+      # tools/release.sh as the release runs it, with a throwaway key, and its refusals; the workflows' rules
+      - name: The release's packing
+        run: make release-test
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
+        with:
+          name: program
+          path: |
+            build/microwakeword
+            build/microwakeword.sha256
+
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          path: plugin
+      # the hassmic the SDK and the engine were taken from (tools/sync.sh writes its commit into sdk/VERSION): the
+      # test runs the plugin in that hassmic's PC build, never in whatever hassmic's branch has today (a ref that
+      # moves), and sdk/ and src/ are checked against that tree.  A commit hassmic's repository does not have on
+      # GitHub (an SDK taken from a tree with changes not pushed) fails here, and so does an sdk/VERSION that names
+      # no commit ("hassmic unknown": actions/checkout given ref '' would take hassmic's default branch; a review of
+      # 6bca341)
+      - name: Which hassmic
+        id: hassmic
+        run: |
+          c=$(sed -n 's/^hassmic \([0-9a-f]\{40\}\).*/\1/p' plugin/sdk/VERSION)
+          [[ $c =~ ^[0-9a-f]{40}$ ]] || { echo "::error::plugin/sdk/VERSION names no commit of hassmic (${c:-none}): run tools/sync.sh with a hassmic that is a git tree"; exit 1; }
+          echo "commit=$c" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          repository: ${{ env.HASSMIC_REPO }}
+          ref: ${{ steps.hassmic.outputs.commit }}
+          path: echo-dot-assist
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          python-version: '3.13'
+      - name: Packages
+        timeout-minutes: 8
+        run: |
+          echo 'man-db man-db/auto-update boolean false' | sudo debconf-set-selections
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libopus-dev libcurl4
+      - name: hassmic for the PC
+        working-directory: echo-dot-assist
+        run: |
+          uv sync --locked
+          make -j"$(nproc)" build/hassmic-host build/plugrun-host
+      - name: The SDK and the engine are that hassmic's
+        working-directory: plugin
+        run: tools/sync.sh --check ../echo-dot-assist
+      - name: Test
+        working-directory: plugin
+        run: make test HASSMIC=../echo-dot-assist

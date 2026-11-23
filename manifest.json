@@ -1,0 +1,18 @@
+{ "id": "microwakeword", "name": "microWakeWord", "version": 8, "version_name": "8",
+  "author": "hassmic", "source": "https://github.com/Gamer92000/hassmic-plugin-microwakeword", "license": "MIT",
+  "description": "The open wake word engine of ESPHome's voice satellites, with models you add. It hears the wake word less reliably than Amazon's engine.",
+  "models": ["*"], "memory_mb": 16, "threads": 2,
+  "requires": {"core": 1, "wake": 1, "files": 1},
+  "capabilities": { "wake": true, "files": 4 },
+  "settings": [
+    { "name": "models", "label": "Wake word models", "type": "files",
+      "help": "microWakeWord's models: a .tflite file each, with the .json manifest of the same name if you have it (the wake word's name, its threshold). ESPHome's own are one click below.",
+      "item": { "by": "stem", "files": [ { "suffix": ".tflite", "max_kb": 1024, "as": "model.tflite" },
+                                         { "suffix": ".json", "max_kb": 16, "as": "manifest.json", "optional": true } ] },
+      "max_items": 16,
+      "fields": [ { "name": "cutoff", "label": "Threshold (lower hears more, and more by mistake)", "type": "number", "min": 0.5, "max": 0.99, "step": 0.01 },
+                  { "name": "window", "label": "Window (30 ms steps the threshold must hold over)", "type": "int", "min": 1, "max": 20 } ],
+      "catalog": { "label": "ESPHome's models",
+                   "base": "https://raw.githubusercontent.com/esphome/micro-wake-word-models/main/models/v2/",
+                   "items": [ { "id": "okay_nabu", "title": "Okay Nabu" }, { "id": "hey_jarvis", "title": "Hey Jarvis" },
+                              { "id": "hey_mycroft", "title": "Hey Mycroft" }, { "id": "alexa", "title": "Alexa" } ] } } ] }
